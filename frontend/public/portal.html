@@ -29,6 +29,9 @@
 
 <div id="app"></div>
 
+<!-- Edit Teacher Modal -->
+<div id="editTeacherModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"></div>
+
 <!-- Merge Modal -->
 <div id="mergeModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
   <div class="card p-6 w-full max-w-md">
@@ -42,6 +45,10 @@
 </div>
 
 <script>
+const LOGO_URL = 'https://customer-assets-4nw71qhi.emergentagent.net/job_ready-portal-2/artifacts/xcgybwuv_IMG-20260828-WA5524.jpg';
+const LEVELS = ['Preschool','Elementary','Highschool'];
+const DEFAULT_SUBJECTS = ['Letters','Numbers','Colors','Abakada','General'];
+
 /* ================== STORAGE HELPERS ================== */
 const LS = {
   get(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
@@ -103,7 +110,7 @@ function renderSelector() {
   app.innerHTML = `
     <div class="min-h-screen flex flex-col items-center justify-center p-6">
       <div class="text-center mb-10">
-        <div class="text-6xl mb-3">📚</div>
+        <img src="${LOGO_URL}" alt="Ready PH" class="w-28 h-28 mx-auto mb-3 rounded-full shadow-md object-cover" />
         <h1 class="text-4xl sm:text-5xl font-bold text-gray-800">Ready PH Portal</h1>
         <p class="text-gray-500 mt-2">Choose your login</p>
       </div>
@@ -188,9 +195,12 @@ function renderAdmin() {
   app.innerHTML = `
     <div class="max-w-6xl mx-auto p-4 sm:p-6">
       <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 class="text-3xl font-bold">📚 Ready PH Portal — Admin</h1>
-          <p class="text-gray-600">Welcome, <b>${state.session.user.name}</b></p>
+        <div class="flex items-center gap-3">
+          <img src="${LOGO_URL}" class="w-14 h-14 rounded-full shadow object-cover" />
+          <div>
+            <h1 class="text-3xl font-bold">Ready PH Portal — Admin</h1>
+            <p class="text-gray-600">Welcome, <b>${state.session.user.name}</b></p>
+          </div>
         </div>
         <button data-testid="logout-btn" onclick="logout()" class="bg-gray-800 text-white px-4 py-2 rounded-xl">Logout</button>
       </div>
@@ -248,8 +258,11 @@ function tabTeachers() {
     return all.filter(v => v.teacherUsername===username).length;
   }
 
-  const rows = filtered.map(t => `
-    <tr class="border-t">
+  const rows = filtered.map(t => {
+    const levels = t.levels || [];
+    const subjects = t.subjects || (t.subject ? [t.subject] : []);
+    return `
+    <tr class="border-t align-top">
       <td class="p-3">${escapeHtml(t.name)}</td>
       <td class="p-3">${escapeHtml(t.username)}</td>
       <td class="p-3">
@@ -258,24 +271,55 @@ function tabTeachers() {
           <button data-testid="toggle-pw-${t.id}" onclick="togglePw('t${t.id}')" class="text-gray-500">👁️</button>
         </div>
       </td>
-      <td class="p-3"><span class="badge" style="background:#E0F2FE;color:#0369A1">${escapeHtml(t.subject)}</span></td>
+      <td class="p-3">
+        <div class="flex flex-wrap gap-1">
+          ${levels.map(l=>`<span class="badge" style="background:#FEF3C7;color:#92400E">${escapeHtml(l)}</span>`).join('') || '<span class="text-xs text-gray-400">—</span>'}
+        </div>
+      </td>
+      <td class="p-3">
+        <div class="flex flex-wrap gap-1">
+          ${subjects.map(s=>`<span class="badge" style="background:#E0F2FE;color:#0369A1">${escapeHtml(s)}</span>`).join('') || '<span class="text-xs text-gray-400">—</span>'}
+        </div>
+      </td>
       <td class="p-3 text-center">${countVideos(t.username)}</td>
       <td class="p-3 text-center">${monthlyCount(t.username)}</td>
-      <td class="p-3"><button data-testid="del-teacher-${t.id}" onclick="deleteTeacher(${t.id})" class="text-red-600 font-semibold">Delete</button></td>
-    </tr>`).join('');
+      <td class="p-3">
+        <div class="flex gap-2">
+          <button data-testid="edit-teacher-${t.id}" onclick="openEditTeacher(${t.id})" class="text-blue-600 font-semibold">Edit</button>
+          <button data-testid="del-teacher-${t.id}" onclick="deleteTeacher(${t.id})" class="text-red-600 font-semibold">Delete</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
 
   return `
     <div class="card p-5 mb-6">
       <h3 class="font-bold text-lg mb-3">➕ Add Teacher</h3>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <input data-testid="new-teacher-name" id="nt-name" placeholder="Name" class="border rounded-xl px-3 py-2" />
         <input data-testid="new-teacher-username" id="nt-username" placeholder="Username" class="border rounded-xl px-3 py-2" />
         <input data-testid="new-teacher-password" id="nt-password" placeholder="Password" class="border rounded-xl px-3 py-2" />
-        <select data-testid="new-teacher-subject" id="nt-subject" class="border rounded-xl px-3 py-2">
-          <option>Letters</option><option>Numbers</option><option>Colors</option><option>Abakada</option><option>General</option>
-        </select>
-        <button data-testid="add-teacher-btn" onclick="addTeacher()" style="background:#2196F3" class="text-white font-bold rounded-xl">Add</button>
       </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+        <div>
+          <label class="text-sm font-semibold text-gray-700">Level(s)</label>
+          <div class="flex flex-wrap gap-2 mt-1" data-testid="nt-levels">
+            ${LEVELS.map(l=>`<label class="inline-flex items-center gap-2 border rounded-xl px-3 py-2 cursor-pointer"><input type="checkbox" class="nt-level" value="${l}" />${l}</label>`).join('')}
+          </div>
+        </div>
+        <div>
+          <label class="text-sm font-semibold text-gray-700">Subject(s)</label>
+          <div class="flex gap-2 mt-1">
+            <input id="nt-subject-input" placeholder="Type subject & press Enter" class="border rounded-xl px-3 py-2 flex-1" onkeydown="if(event.key==='Enter'){event.preventDefault(); addSubjectTag('nt');}" />
+            <button type="button" onclick="addSubjectTag('nt')" class="bg-gray-800 text-white px-3 py-2 rounded-xl">Add</button>
+          </div>
+          <div id="nt-subjects" class="flex flex-wrap gap-2 mt-2" data-testid="nt-subjects"></div>
+          <div class="flex flex-wrap gap-1 mt-2 text-xs text-gray-500">
+            Quick add:${DEFAULT_SUBJECTS.map(s=>` <button type="button" onclick="quickAddSubject('nt','${s}')" class="underline">${s}</button>`).join(' •')}
+          </div>
+        </div>
+      </div>
+      <button data-testid="add-teacher-btn" onclick="addTeacher()" style="background:#2196F3" class="text-white font-bold rounded-xl px-6 py-2">Add Teacher</button>
     </div>
 
     <div class="card p-5">
@@ -292,24 +336,107 @@ function tabTeachers() {
         <table class="w-full text-sm">
           <thead class="bg-gray-100"><tr>
             <th class="p-3 text-left">Name</th><th class="p-3 text-left">Username</th><th class="p-3 text-left">Password</th>
-            <th class="p-3 text-left">Subject</th><th class="p-3 text-center">Total Videos</th><th class="p-3 text-center">Monthly</th><th class="p-3">Actions</th>
+            <th class="p-3 text-left">Levels</th><th class="p-3 text-left">Subjects</th>
+            <th class="p-3 text-center">Total Videos</th><th class="p-3 text-center">Monthly</th><th class="p-3">Actions</th>
           </tr></thead>
-          <tbody>${rows || '<tr><td colspan="7" class="p-6 text-center text-gray-400">No teachers yet</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="8" class="p-6 text-center text-gray-400">No teachers yet</td></tr>'}</tbody>
         </table>
       </div>
     </div>`;
+}
+
+/* Tag-input state for adding/editing subjects */
+state.ntSubjects = [];
+state.editSubjects = [];
+function addSubjectTag(prefix) {
+  const key = prefix==='nt' ? 'ntSubjects' : 'editSubjects';
+  const inputId = prefix==='nt' ? 'nt-subject-input' : 'edit-subject-input';
+  const containerId = prefix==='nt' ? 'nt-subjects' : 'edit-subjects';
+  const inp = document.getElementById(inputId);
+  const v = (inp.value||'').trim(); if (!v) return;
+  if (!state[key].includes(v)) state[key].push(v);
+  inp.value = '';
+  renderSubjectTags(prefix);
+}
+function quickAddSubject(prefix, s) {
+  const key = prefix==='nt' ? 'ntSubjects' : 'editSubjects';
+  if (!state[key].includes(s)) state[key].push(s);
+  renderSubjectTags(prefix);
+}
+function removeSubjectTag(prefix, s) {
+  const key = prefix==='nt' ? 'ntSubjects' : 'editSubjects';
+  state[key] = state[key].filter(x => x !== s);
+  renderSubjectTags(prefix);
+}
+function renderSubjectTags(prefix) {
+  const key = prefix==='nt' ? 'ntSubjects' : 'editSubjects';
+  const containerId = prefix==='nt' ? 'nt-subjects' : 'edit-subjects';
+  const c = document.getElementById(containerId); if (!c) return;
+  c.innerHTML = state[key].map(s => `<span class="badge inline-flex items-center gap-1" style="background:#E0F2FE;color:#0369A1">${escapeHtml(s)} <button onclick="removeSubjectTag('${prefix}','${escapeAttr(s)}')" class="ml-1">×</button></span>`).join('');
 }
 
 function addTeacher() {
   const name = document.getElementById('nt-name').value.trim();
   const username = document.getElementById('nt-username').value.trim();
   const password = document.getElementById('nt-password').value;
-  const subject = document.getElementById('nt-subject').value;
-  if (!name || !username || !password) return alert('Fill all fields');
+  const levels = Array.from(document.querySelectorAll('.nt-level:checked')).map(el => el.value);
+  const subjects = [...state.ntSubjects];
+  if (!name || !username || !password) return alert('Fill name, username & password');
+  if (levels.length===0) return alert('Pick at least one level');
+  if (subjects.length===0) return alert('Add at least one subject');
   const teachers = LS.get('teacher_accounts', []);
   if (teachers.find(t => t.username===username)) return alert('Username already exists');
-  teachers.push({ id: Date.now(), name, username, password, subject, createdAt: new Date().toISOString() });
+  teachers.push({ id: Date.now(), name, username, password, levels, subjects, createdAt: new Date().toISOString() });
   LS.set('teacher_accounts', teachers);
+  state.ntSubjects = [];
+  renderTab();
+}
+
+function openEditTeacher(id) {
+  const t = LS.get('teacher_accounts', []).find(x => x.id===id); if (!t) return;
+  state.editSubjects = [...(t.subjects || (t.subject?[t.subject]:[]))];
+  state.editingTeacherId = id;
+  const modal = document.getElementById('editTeacherModal');
+  modal.innerHTML = `
+    <div class="card p-6 w-full max-w-lg">
+      <h3 class="text-xl font-bold mb-4">Edit Teacher — ${escapeHtml(t.name)}</h3>
+      <div class="mb-4">
+        <label class="text-sm font-semibold">Level(s)</label>
+        <div class="flex flex-wrap gap-2 mt-1">
+          ${LEVELS.map(l=>`<label class="inline-flex items-center gap-2 border rounded-xl px-3 py-2 cursor-pointer"><input type="checkbox" class="edit-level" value="${l}" ${(t.levels||[]).includes(l)?'checked':''} />${l}</label>`).join('')}
+        </div>
+      </div>
+      <div class="mb-4">
+        <label class="text-sm font-semibold">Subject(s)</label>
+        <div class="flex gap-2 mt-1">
+          <input id="edit-subject-input" placeholder="Type subject & press Enter" class="border rounded-xl px-3 py-2 flex-1" onkeydown="if(event.key==='Enter'){event.preventDefault(); addSubjectTag('edit');}" />
+          <button type="button" onclick="addSubjectTag('edit')" class="bg-gray-800 text-white px-3 py-2 rounded-xl">Add</button>
+        </div>
+        <div id="edit-subjects" class="flex flex-wrap gap-2 mt-2"></div>
+        <div class="flex flex-wrap gap-1 mt-2 text-xs text-gray-500">
+          Quick add:${DEFAULT_SUBJECTS.map(s=>` <button type="button" onclick="quickAddSubject('edit','${s}')" class="underline">${s}</button>`).join(' •')}
+        </div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button onclick="closeEditTeacher()" class="px-4 py-2 rounded-xl border">Cancel</button>
+        <button data-testid="save-edit-teacher" onclick="saveEditTeacher()" style="background:#2196F3" class="text-white font-bold px-5 py-2 rounded-xl">Save</button>
+      </div>
+    </div>`;
+  modal.classList.remove('hidden');
+  renderSubjectTags('edit');
+}
+function closeEditTeacher() { document.getElementById('editTeacherModal').classList.add('hidden'); state.editingTeacherId = null; }
+function saveEditTeacher() {
+  const id = state.editingTeacherId; if (!id) return;
+  const teachers = LS.get('teacher_accounts', []);
+  const t = teachers.find(x => x.id===id); if (!t) return;
+  const levels = Array.from(document.querySelectorAll('.edit-level:checked')).map(el => el.value);
+  const subjects = [...state.editSubjects];
+  if (levels.length===0) return alert('Pick at least one level');
+  if (subjects.length===0) return alert('Add at least one subject');
+  t.levels = levels; t.subjects = subjects; delete t.subject;
+  LS.set('teacher_accounts', teachers);
+  closeEditTeacher();
   renderTab();
 }
 
@@ -500,7 +627,7 @@ function tabPending() {
         </select>
         <select onchange="state.pendingFilter.category=this.value; renderTab();" class="border rounded-xl px-3 py-2" data-testid="pending-f-category">
           <option value="">All Categories</option>
-          ${['Letters','Numbers','Colors','Abakada','General'].map(c=>`<option value="${c}" ${f.category===c?'selected':''}>${c}</option>`).join('')}
+          ${allCategories().map(c=>`<option value="${escapeAttr(c)}" ${f.category===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
         </select>
         <div class="flex gap-2">
           <button onclick="state.pendingFilter.time='all'; renderTab();" class="tab-btn flex-1 ${f.time==='all'?'active':''}">All</button>
@@ -589,7 +716,7 @@ function tabApproved() {
         </select>
         <select onchange="state.approvedFilter.category=this.value; renderTab();" class="border rounded-xl px-3 py-2">
           <option value="">All Categories</option>
-          ${['Letters','Numbers','Colors','Abakada','General'].map(c=>`<option value="${c}" ${f.category===c?'selected':''}>${c}</option>`).join('')}
+          ${allCategories().map(c=>`<option value="${escapeAttr(c)}" ${f.category===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
         </select>
         <div class="flex gap-2">
           <button onclick="state.approvedFilter.time='all'; renderTab();" class="tab-btn flex-1 ${f.time==='all'?'active':''}">All</button>
@@ -651,9 +778,15 @@ async function mergeAndDownload(teacherVideoUrl, title, teacherName) {
 /* ================== TEACHER DASHBOARD ================== */
 function renderTeacher() {
   const t = state.session.user;
+  // Refresh from storage in case levels/subjects were edited
+  const fresh = LS.get('teacher_accounts', []).find(x => x.username === t.username);
+  if (fresh) { state.session.user = fresh; sessionStorage.setItem('rph_session', JSON.stringify(state.session)); }
+  const teacher = state.session.user;
+  const levels = teacher.levels || [];
+  const subjects = teacher.subjects || (teacher.subject ? [teacher.subject] : DEFAULT_SUBJECTS);
   const pending = LS.get('pending_videos', []);
   const approved = LS.get('approved_videos', []);
-  const mine = [...pending, ...approved].filter(v => v.teacherUsername === t.username);
+  const mine = [...pending, ...approved].filter(v => v.teacherUsername === teacher.username);
   const now = new Date();
   const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const monthly = mine.filter(v => { const d=new Date(v.date); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`===curMonth; }).length;
@@ -661,9 +794,15 @@ function renderTeacher() {
   app.innerHTML = `
     <div class="max-w-4xl mx-auto p-4 sm:p-6">
       <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 class="text-3xl font-bold">👩‍🏫 Welcome, ${escapeHtml(t.name)}</h1>
-          <p class="text-gray-600">Subject: <b>${escapeHtml(t.subject)}</b></p>
+        <div class="flex items-center gap-3">
+          <img src="${LOGO_URL}" class="w-14 h-14 rounded-full shadow object-cover" />
+          <div>
+            <h1 class="text-3xl font-bold">Welcome, ${escapeHtml(teacher.name)}</h1>
+            <div class="flex flex-wrap gap-1 mt-1">
+              ${levels.map(l=>`<span class="badge" style="background:#FEF3C7;color:#92400E">${escapeHtml(l)}</span>`).join('')}
+              ${subjects.map(s=>`<span class="badge" style="background:#E0F2FE;color:#0369A1">${escapeHtml(s)}</span>`).join('')}
+            </div>
+          </div>
         </div>
         <button data-testid="logout-btn" onclick="logout()" class="bg-gray-800 text-white px-4 py-2 rounded-xl">Logout</button>
       </div>
@@ -675,7 +814,7 @@ function renderTeacher() {
         <h3 class="font-bold text-lg mb-3">📤 Upload New Video</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <select id="tu-category" class="border rounded-xl px-3 py-2" data-testid="upload-category">
-            <option>Letters</option><option>Numbers</option><option>Colors</option><option>Abakada</option><option>General</option>
+            ${subjects.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}
           </select>
           <input id="tu-title" placeholder="Video title" class="border rounded-xl px-3 py-2" data-testid="upload-title" />
         </div>
@@ -729,6 +868,12 @@ async function teacherUpload() {
 }
 
 /* ================== UTILITIES ================== */
+function allCategories() {
+  const set = new Set(DEFAULT_SUBJECTS);
+  LS.get('teacher_accounts', []).forEach(t => (t.subjects||(t.subject?[t.subject]:[])).forEach(s => set.add(s)));
+  [...LS.get('pending_videos', []), ...LS.get('approved_videos', [])].forEach(v => v.category && set.add(v.category));
+  return [...set];
+}
 function escapeHtml(s='') { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s='') { return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
 
