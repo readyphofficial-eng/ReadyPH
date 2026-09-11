@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ready PH Portal</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<style>
+  :root { color-scheme: light; }
+  html, body { font-family: 'Fredoka', sans-serif; background:#FFF8E7; }
+  .card { background:#fff; border-radius:16px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
+  .tab-btn { padding: 10px 16px; border-radius: 12px; font-weight:600; }
+  .tab-btn.active { background:#2196F3; color:white; }
+  .tab-btn:not(.active) { background:#EEF2F7; color:#374151; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  input, select { font-family:'Fredoka', sans-serif; }
+  video { border-radius:12px; background:#000; }
+  .progress-bar { transition: width 0.3s ease; }
+  ::-webkit-scrollbar { width: 8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app"></div>
+
+<!-- Merge Modal -->
+<div id="mergeModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+  <div class="card p-6 w-full max-w-md">
+    <h3 class="text-xl font-bold mb-2">⏳ Merging HD...</h3>
+    <p class="text-sm text-gray-600 mb-4">Intro + Teacher + Outro — Browser only, 100% HD, 1–2 mins</p>
+    <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+      <div id="mergeProgress" class="progress-bar bg-[#06D6A0] h-4" style="width:0%"></div>
+    </div>
+    <p id="mergeStatus" class="mt-3 text-sm text-gray-700">Starting…</p>
+  </div>
+</div>
+
+<script>
+/* ================== STORAGE HELPERS ================== */
+const LS = {
+  get(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
+  set(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
+};
+
+/* Initialize default admin */
+(function initDefaults() {
+  const admins = LS.get('admin_accounts', null);
+  if (!admins || admins.length === 0) {
+    LS.set('admin_accounts', [{ name:'Main Admin', username:'admin', password:'readyph2026', createdAt: new Date().toISOString() }]);
+  }
+  if (!LS.get('teacher_accounts', null)) LS.set('teacher_accounts', []);
+  if (!LS.get('pending_videos', null)) LS.set('pending_videos', []);
+  if (!LS.get('approved_videos', null)) LS.set('approved_videos', []);
+  if (!LS.get('branding', null)) LS.set('branding', { introUrl:null, introName:null, outroUrl:null, outroName:null });
+})();
+
+/* ================== APP STATE ================== */
+const state = {
+  route: 'selector', // selector | adminLogin | admin | teacherLogin | teacher
+  session: null, // {type:'admin'|'teacher', user}
+  activeTab: 'teachers',
+  teacherFilter: { time:'all', month:'', q:'' },
+  pendingFilter: { teacher:'', category:'', time:'all', q:'' },
+  approvedFilter: { teacher:'', category:'', time:'all', q:'' },
+  showPw: {}, // id -> bool
+  uploadProgress: null,
+};
+
+/* Persist session */
+try { const s = JSON.parse(sessionStorage.getItem('rph_session')); if (s) { state.session = s; state.route = s.type==='admin'?'admin':'teacher'; } } catch {}
+
+function setSession(sess) {
+  state.session = sess;
+  if (sess) sessionStorage.setItem('rph_session', JSON.stringify(sess));
+  else sessionStorage.removeItem('rph_session');
+}
+
+function logout() {
+  setSession(null);
+  state.route = 'selector';
+  render();
+}
+
+/* ================== RENDER ================== */
+const app = document.getElementById('app');
+
+function render() {
+  if (state.route === 'selector') return renderSelector();
+  if (state.route === 'adminLogin') return renderAdminLogin();
+  if (state.route === 'teacherLogin') return renderTeacherLogin();
+  if (state.route === 'admin') return renderAdmin();
+  if (state.route === 'teacher') return renderTeacher();
+}
+
+/* ---------- PAGE 1 Login Selection ---------- */
+function renderSelector() {
+  app.innerHTML = `
+    <div class="min-h-screen flex flex-col items-center justify-center p-6">
+      <div class="text-center mb-10">
+        <div class="text-6xl mb-3">📚</div>
+        <h1 class="text-4xl sm:text-5xl font-bold text-gray-800">Ready PH Portal</h1>
+        <p class="text-gray-500 mt-2">Choose your login</p>
+      </div>
+      <div class="flex flex-col gap-4">
+        <button data-testid="admin-login-btn" onclick="goto('adminLogin')" style="background:#2196F3;width:300px;padding:20px;border-radius:16px" class="text-white font-bold text-lg shadow-lg hover:brightness-110 transition">🔐 ADMIN</button>
+        <button data-testid="teacher-login-btn" onclick="goto('teacherLogin')" style="background:#06D6A0;width:300px;padding:20px;border-radius:16px" class="text-white font-bold text-lg shadow-lg hover:brightness-110 transition">👩‍🏫 TEACHER</button>
+      </div>
+    </div>`;
+}
+function goto(r) { state.route = r; render(); }
+
+/* ---------- ADMIN LOGIN ---------- */
+function renderAdminLogin() {
+  app.innerHTML = `
+    <div class="min-h-screen flex flex-col items-center justify-center p-6">
+      <div class="card p-8 w-full max-w-sm">
+        <div class="text-center mb-6">
+          <div class="text-5xl">🔐</div>
+          <h2 class="text-2xl font-bold mt-2">Admin Login</h2>
+        </div>
+        <form onsubmit="event.preventDefault(); adminLogin();">
+          <label class="block text-sm font-medium">Username</label>
+          <input data-testid="admin-username-input" id="a-username" class="w-full border rounded-xl px-4 py-3 mb-3 mt-1" placeholder="admin" />
+          <label class="block text-sm font-medium">Password</label>
+          <input data-testid="admin-password-input" id="a-password" type="password" class="w-full border rounded-xl px-4 py-3 mb-4 mt-1" placeholder="••••••" />
+          <div id="a-err" class="text-red-600 text-sm mb-2 hidden"></div>
+          <button data-testid="admin-submit-btn" type="submit" style="background:#2196F3" class="w-full text-white font-bold py-3 rounded-xl">Login</button>
+          <button type="button" onclick="goto('selector')" class="w-full mt-3 py-2 text-sm text-gray-600">← Back</button>
+        </form>
+      </div>
+    </div>`;
+}
+
+function adminLogin() {
+  const u = document.getElementById('a-username').value.trim();
+  const p = document.getElementById('a-password').value;
+  const admins = LS.get('admin_accounts', []);
+  const found = admins.find(a => a.username===u && a.password===p);
+  const err = document.getElementById('a-err');
+  if (!found) { err.textContent='Invalid username or password'; err.classList.remove('hidden'); return; }
+  setSession({ type:'admin', user: found });
+  state.route = 'admin';
+  render();
+}
+
+/* ---------- TEACHER LOGIN ---------- */
+function renderTeacherLogin() {
+  app.innerHTML = `
+    <div class="min-h-screen flex flex-col items-center justify-center p-6">
+      <div class="card p-8 w-full max-w-sm">
+        <div class="text-center mb-6">
+          <div class="text-5xl">👩‍🏫</div>
+          <h2 class="text-2xl font-bold mt-2">Teacher Login</h2>
+        </div>
+        <form onsubmit="event.preventDefault(); teacherLogin();">
+          <label class="block text-sm font-medium">Username</label>
+          <input data-testid="teacher-username-input" id="t-username" class="w-full border rounded-xl px-4 py-3 mb-3 mt-1" />
+          <label class="block text-sm font-medium">Password</label>
+          <input data-testid="teacher-password-input" id="t-password" type="password" class="w-full border rounded-xl px-4 py-3 mb-4 mt-1" />
+          <div id="t-err" class="text-red-600 text-sm mb-2 hidden"></div>
+          <button data-testid="teacher-submit-btn" type="submit" style="background:#06D6A0" class="w-full text-white font-bold py-3 rounded-xl">Login</button>
+          <button type="button" onclick="goto('selector')" class="w-full mt-3 py-2 text-sm text-gray-600">← Back</button>
+        </form>
+      </div>
+    </div>`;
+}
+
+function teacherLogin() {
+  const u = document.getElementById('t-username').value.trim();
+  const p = document.getElementById('t-password').value;
+  const teachers = LS.get('teacher_accounts', []);
+  const found = teachers.find(t => t.username===u && t.password===p);
+  const err = document.getElementById('t-err');
+  if (!found) { err.textContent='Account not found — contact admin'; err.classList.remove('hidden'); return; }
+  setSession({ type:'teacher', user: found });
+  state.route = 'teacher';
+  render();
+}
+
+/* ================== ADMIN DASHBOARD ================== */
+function renderAdmin() {
+  app.innerHTML = `
+    <div class="max-w-6xl mx-auto p-4 sm:p-6">
+      <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div>
+          <h1 class="text-3xl font-bold">📚 Ready PH Portal — Admin</h1>
+          <p class="text-gray-600">Welcome, <b>${state.session.user.name}</b></p>
+        </div>
+        <button data-testid="logout-btn" onclick="logout()" class="bg-gray-800 text-white px-4 py-2 rounded-xl">Logout</button>
+      </div>
+      <div class="flex gap-2 flex-wrap mb-6">
+        <button data-testid="tab-teachers" onclick="setTab('teachers')" class="tab-btn ${state.activeTab==='teachers'?'active':''}">Manage Teachers</button>
+        <button data-testid="tab-admins" onclick="setTab('admins')" class="tab-btn ${state.activeTab==='admins'?'active':''}">Manage Admins</button>
+        <button data-testid="tab-branding" onclick="setTab('branding')" class="tab-btn ${state.activeTab==='branding'?'active':''}">Branding</button>
+        <button data-testid="tab-pending" onclick="setTab('pending')" class="tab-btn ${state.activeTab==='pending'?'active':''}">Pending Videos</button>
+        <button data-testid="tab-approved" onclick="setTab('approved')" class="tab-btn ${state.activeTab==='approved'?'active':''}">Approved Videos</button>
+      </div>
+      <div id="tab-content"></div>
+    </div>`;
+  renderTab();
+}
+function setTab(t) { state.activeTab = t; renderTab(); document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active')); document.querySelector(`[data-testid="tab-${t}"]`)?.classList.add('active'); }
+
+function renderTab() {
+  const c = document.getElementById('tab-content');
+  if (!c) return;
+  if (state.activeTab==='teachers') c.innerHTML = tabTeachers();
+  if (state.activeTab==='admins') c.innerHTML = tabAdmins();
+  if (state.activeTab==='branding') c.innerHTML = tabBranding();
+  if (state.activeTab==='pending') c.innerHTML = tabPending();
+  if (state.activeTab==='approved') c.innerHTML = tabApproved();
+}
+
+/* ---------- TAB: Manage Teachers ---------- */
+function tabTeachers() {
+  const teachers = LS.get('teacher_accounts', []);
+  const pending = LS.get('pending_videos', []);
+  const approved = LS.get('approved_videos', []);
+  const all = [...pending, ...approved];
+  const now = new Date();
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const f = state.teacherFilter;
+  const filtered = teachers.filter(t => {
+    if (f.q && !(`${t.name} ${t.username}`.toLowerCase().includes(f.q.toLowerCase()))) return false;
+    return true;
+  });
+
+  function countVideos(username) {
+    return all.filter(v => {
+      if (v.teacherUsername !== username) return false;
+      const d = new Date(v.date);
+      const vm = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      if (f.time==='month' && vm !== curMonth) return false;
+      if (f.time==='select' && f.month && vm !== f.month) return false;
+      return true;
+    }).length;
+  }
+  function monthlyCount(username) {
+    return all.filter(v => v.teacherUsername===username && (()=>{ const d=new Date(v.date); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`===curMonth; })()).length;
+  }
+  function totalCount(username) {
+    return all.filter(v => v.teacherUsername===username).length;
+  }
+
+  const rows = filtered.map(t => `
+    <tr class="border-t">
+      <td class="p-3">${escapeHtml(t.name)}</td>
+      <td class="p-3">${escapeHtml(t.username)}</td>
+      <td class="p-3">
+        <div class="flex items-center gap-2">
+          <span data-testid="pw-${t.id}">${state.showPw['t'+t.id] ? escapeHtml(t.password) : '••••••'}</span>
+          <button data-testid="toggle-pw-${t.id}" onclick="togglePw('t${t.id}')" class="text-gray-500">👁️</button>
+        </div>
+      </td>
+      <td class="p-3"><span class="badge" style="background:#E0F2FE;color:#0369A1">${escapeHtml(t.subject)}</span></td>
+      <td class="p-3 text-center">${countVideos(t.username)}</td>
+      <td class="p-3 text-center">${monthlyCount(t.username)}</td>
+      <td class="p-3"><button data-testid="del-teacher-${t.id}" onclick="deleteTeacher(${t.id})" class="text-red-600 font-semibold">Delete</button></td>
+    </tr>`).join('');
+
+  return `
+    <div class="card p-5 mb-6">
+      <h3 class="font-bold text-lg mb-3">➕ Add Teacher</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <input data-testid="new-teacher-name" id="nt-name" placeholder="Name" class="border rounded-xl px-3 py-2" />
+        <input data-testid="new-teacher-username" id="nt-username" placeholder="Username" class="border rounded-xl px-3 py-2" />
+        <input data-testid="new-teacher-password" id="nt-password" placeholder="Password" class="border rounded-xl px-3 py-2" />
+        <select data-testid="new-teacher-subject" id="nt-subject" class="border rounded-xl px-3 py-2">
+          <option>Letters</option><option>Numbers</option><option>Colors</option><option>Abakada</option><option>General</option>
+        </select>
+        <button data-testid="add-teacher-btn" onclick="addTeacher()" style="background:#2196F3" class="text-white font-bold rounded-xl">Add</button>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <div class="flex flex-wrap gap-2 mb-4 items-center">
+        <button onclick="setTeacherFilter('all')" class="tab-btn ${f.time==='all'?'active':''}" data-testid="tf-all">All Time</button>
+        <button onclick="setTeacherFilter('month')" class="tab-btn ${f.time==='month'?'active':''}" data-testid="tf-month">This Month</button>
+        <select onchange="setTeacherFilterMonth(this.value)" class="border rounded-xl px-3 py-2" data-testid="tf-select-month">
+          <option value="">Select Month</option>
+          ${monthOptions(f.month)}
+        </select>
+        <input oninput="setTeacherFilterQ(this.value)" placeholder="Search name/username" class="border rounded-xl px-3 py-2 ml-auto" data-testid="tf-search" />
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100"><tr>
+            <th class="p-3 text-left">Name</th><th class="p-3 text-left">Username</th><th class="p-3 text-left">Password</th>
+            <th class="p-3 text-left">Subject</th><th class="p-3 text-center">Total Videos</th><th class="p-3 text-center">Monthly</th><th class="p-3">Actions</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="7" class="p-6 text-center text-gray-400">No teachers yet</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function addTeacher() {
+  const name = document.getElementById('nt-name').value.trim();
+  const username = document.getElementById('nt-username').value.trim();
+  const password = document.getElementById('nt-password').value;
+  const subject = document.getElementById('nt-subject').value;
+  if (!name || !username || !password) return alert('Fill all fields');
+  const teachers = LS.get('teacher_accounts', []);
+  if (teachers.find(t => t.username===username)) return alert('Username already exists');
+  teachers.push({ id: Date.now(), name, username, password, subject, createdAt: new Date().toISOString() });
+  LS.set('teacher_accounts', teachers);
+  renderTab();
+}
+
+function deleteTeacher(id) {
+  if (!confirm('Delete this teacher?')) return;
+  LS.set('teacher_accounts', LS.get('teacher_accounts', []).filter(t => t.id !== id));
+  renderTab();
+}
+
+function togglePw(k) { state.showPw[k] = !state.showPw[k]; renderTab(); }
+function setTeacherFilter(v) { state.teacherFilter.time = v; renderTab(); }
+function setTeacherFilterMonth(v) { state.teacherFilter.time = v ? 'select' : 'all'; state.teacherFilter.month = v; renderTab(); }
+function setTeacherFilterQ(v) { state.teacherFilter.q = v; renderTab(); }
+
+function monthOptions(cur) {
+  const opts = [];
+  const now = new Date();
+  for (let i=0; i<12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const label = d.toLocaleString('default',{month:'long', year:'numeric'});
+    opts.push(`<option value="${val}" ${cur===val?'selected':''}>${label}</option>`);
+  }
+  return opts.join('');
+}
+
+/* ---------- TAB: Manage Admins ---------- */
+function tabAdmins() {
+  const admins = LS.get('admin_accounts', []);
+  const rows = admins.map(a => `
+    <tr class="border-t">
+      <td class="p-3">${escapeHtml(a.name)}</td>
+      <td class="p-3">${escapeHtml(a.username)}</td>
+      <td class="p-3">
+        <div class="flex items-center gap-2">
+          <span>${state.showPw['a'+a.username] ? escapeHtml(a.password) : '••••••'}</span>
+          <button onclick="togglePw('a${a.username}')" class="text-gray-500">👁️</button>
+        </div>
+      </td>
+      <td class="p-3 text-sm text-gray-600">${new Date(a.createdAt).toLocaleDateString()}</td>
+      <td class="p-3">${a.username==='admin' ? '<span class="text-gray-400 text-sm">Protected</span>' : `<button data-testid="del-admin-${a.username}" onclick="deleteAdmin('${a.username}')" class="text-red-600 font-semibold">Delete</button>`}</td>
+    </tr>`).join('');
+  return `
+    <div class="card p-5 mb-6">
+      <h3 class="font-bold text-lg mb-1">➕ Add Admin</h3>
+      <p class="text-xs text-gray-500 mb-3">Only an admin can create another admin</p>
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <input data-testid="new-admin-name" id="na-name" placeholder="Name" class="border rounded-xl px-3 py-2" />
+        <input data-testid="new-admin-username" id="na-username" placeholder="Username" class="border rounded-xl px-3 py-2" />
+        <input data-testid="new-admin-password" id="na-password" placeholder="Password" class="border rounded-xl px-3 py-2" />
+        <button data-testid="add-admin-btn" onclick="addAdmin()" style="background:#2196F3" class="text-white font-bold rounded-xl">Add</button>
+      </div>
+    </div>
+    <div class="card p-5">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100"><tr>
+          <th class="p-3 text-left">Name</th><th class="p-3 text-left">Username</th><th class="p-3 text-left">Password</th><th class="p-3 text-left">Created</th><th class="p-3">Actions</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+function addAdmin() {
+  const name = document.getElementById('na-name').value.trim();
+  const username = document.getElementById('na-username').value.trim();
+  const password = document.getElementById('na-password').value;
+  if (!name || !username || !password) return alert('Fill all fields');
+  const admins = LS.get('admin_accounts', []);
+  if (admins.find(a => a.username===username)) return alert('Username already exists');
+  admins.push({ name, username, password, createdAt: new Date().toISOString() });
+  LS.set('admin_accounts', admins);
+  renderTab();
+}
+function deleteAdmin(u) {
+  if (u==='admin') return;
+  if (!confirm('Delete this admin?')) return;
+  LS.set('admin_accounts', LS.get('admin_accounts', []).filter(a => a.username !== u));
+  renderTab();
+}
+
+/* ---------- TAB: Branding ---------- */
+function tabBranding() {
+  const b = LS.get('branding', {});
+  return `
+    <div class="card p-5">
+      <h3 class="font-bold text-lg mb-1">🎬 Intro / Outro Branding</h3>
+      <p class="text-sm text-gray-600 mb-5">Final video = Intro + Teacher Video + Outro — 100% HD</p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <h4 class="font-semibold mb-2">Intro Video</h4>
+          ${b.introUrl ? `
+            <video src="${b.introUrl}" controls style="width:250px"></video>
+            <p class="text-sm text-gray-500 mt-2 break-all">${escapeHtml(b.introName||'')}</p>
+            <div class="flex gap-2 mt-3">
+              <label class="cursor-pointer bg-blue-500 text-white px-4 py-2 rounded-xl font-semibold">Replace<input data-testid="intro-replace" type="file" accept="video/*" class="hidden" onchange="uploadBranding(event,'intro')" /></label>
+              <button data-testid="intro-delete" onclick="deleteBranding('intro')" class="bg-red-500 text-white px-4 py-2 rounded-xl font-semibold">Delete</button>
+            </div>` : `
+            <label class="cursor-pointer inline-block bg-blue-500 text-white px-4 py-2 rounded-xl font-semibold">Upload Intro<input data-testid="intro-upload" type="file" accept="video/*" class="hidden" onchange="uploadBranding(event,'intro')" /></label>`}
+          <div id="intro-progress" class="mt-3 hidden"><div class="w-full bg-gray-200 rounded-full h-3"><div id="intro-bar" class="progress-bar bg-blue-500 h-3 rounded-full" style="width:0%"></div></div><p id="intro-status" class="text-sm mt-1"></p></div>
+        </div>
+        <div>
+          <h4 class="font-semibold mb-2">Outro Video</h4>
+          ${b.outroUrl ? `
+            <video src="${b.outroUrl}" controls style="width:250px"></video>
+            <p class="text-sm text-gray-500 mt-2 break-all">${escapeHtml(b.outroName||'')}</p>
+            <div class="flex gap-2 mt-3">
+              <label class="cursor-pointer bg-blue-500 text-white px-4 py-2 rounded-xl font-semibold">Replace<input data-testid="outro-replace" type="file" accept="video/*" class="hidden" onchange="uploadBranding(event,'outro')" /></label>
+              <button data-testid="outro-delete" onclick="deleteBranding('outro')" class="bg-red-500 text-white px-4 py-2 rounded-xl font-semibold">Delete</button>
+            </div>` : `
+            <label class="cursor-pointer inline-block bg-blue-500 text-white px-4 py-2 rounded-xl font-semibold">Upload Outro<input data-testid="outro-upload" type="file" accept="video/*" class="hidden" onchange="uploadBranding(event,'outro')" /></label>`}
+          <div id="outro-progress" class="mt-3 hidden"><div class="w-full bg-gray-200 rounded-full h-3"><div id="outro-bar" class="progress-bar bg-blue-500 h-3 rounded-full" style="width:0%"></div></div><p id="outro-status" class="text-sm mt-1"></p></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function uploadBranding(evt, which) {
+  const file = evt.target.files[0]; if (!file) return;
+  const progEl = document.getElementById(`${which}-progress`);
+  const bar = document.getElementById(`${which}-bar`);
+  const status = document.getElementById(`${which}-status`);
+  progEl.classList.remove('hidden');
+  try {
+    const res = await goFileUpload(file, (pct) => { bar.style.width = pct+'%'; status.textContent = `Uploading HD… ${pct}%`; });
+    const b = LS.get('branding', {});
+    if (which==='intro') { b.introUrl = res.directLink; b.introName = file.name; }
+    else { b.outroUrl = res.directLink; b.outroName = file.name; }
+    LS.set('branding', b);
+    status.textContent = '✅ Uploaded';
+    renderTab();
+  } catch(e) {
+    status.textContent = '❌ Upload failed: ' + e.message;
+  }
+}
+function deleteBranding(which) {
+  const b = LS.get('branding', {});
+  if (which==='intro') { b.introUrl=null; b.introName=null; } else { b.outroUrl=null; b.outroName=null; }
+  LS.set('branding', b);
+  renderTab();
+}
+
+/* ---------- GoFile Upload ---------- */
+async function goFileUpload(file, onProgress) {
+  // Get server
+  const srvRes = await fetch('https://api.gofile.io/servers');
+  const srvData = await srvRes.json();
+  const server = srvData?.data?.servers?.[0]?.name || 'store1';
+  return new Promise((resolve, reject) => {
+    const fd = new FormData(); fd.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `https://${server}.gofile.io/contents/uploadfile`);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round(e.loaded*100/e.total)); };
+    xhr.onload = () => {
+      try {
+        const j = JSON.parse(xhr.responseText);
+        if (j.status==='ok') resolve({ directLink: j.data.downloadPage || j.data.directLink || j.data.link, raw: j });
+        else reject(new Error(j.status || 'Upload failed'));
+      } catch(e){ reject(e); }
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(fd);
+  });
+}
+
+/* ---------- TAB: Pending Videos ---------- */
+function tabPending() {
+  const pending = LS.get('pending_videos', []);
+  const teachers = LS.get('teacher_accounts', []);
+  const f = state.pendingFilter;
+  const now = new Date();
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const filtered = pending.filter(v => {
+    if (f.teacher && v.teacherUsername !== f.teacher) return false;
+    if (f.category && v.category !== f.category) return false;
+    if (f.q && !v.title.toLowerCase().includes(f.q.toLowerCase())) return false;
+    if (f.time==='month') {
+      const d = new Date(v.date); const vm = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      if (vm !== curMonth) return false;
+    }
+    return true;
+  });
+  return `
+    <div class="card p-5 mb-4">
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <select onchange="state.pendingFilter.teacher=this.value; renderTab();" class="border rounded-xl px-3 py-2" data-testid="pending-f-teacher">
+          <option value="">All Teachers</option>
+          ${teachers.map(t=>`<option value="${t.username}" ${f.teacher===t.username?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
+        </select>
+        <select onchange="state.pendingFilter.category=this.value; renderTab();" class="border rounded-xl px-3 py-2" data-testid="pending-f-category">
+          <option value="">All Categories</option>
+          ${['Letters','Numbers','Colors','Abakada','General'].map(c=>`<option value="${c}" ${f.category===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+        <div class="flex gap-2">
+          <button onclick="state.pendingFilter.time='all'; renderTab();" class="tab-btn flex-1 ${f.time==='all'?'active':''}">All</button>
+          <button onclick="state.pendingFilter.time='month'; renderTab();" class="tab-btn flex-1 ${f.time==='month'?'active':''}">This Month</button>
+        </div>
+        <input oninput="state.pendingFilter.q=this.value; renderTab();" placeholder="Search title" class="border rounded-xl px-3 py-2" data-testid="pending-f-search" />
+      </div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      ${filtered.length ? filtered.map(v => videoCard(v, 'pending')).join('') : '<div class="text-center text-gray-400 col-span-2 p-10">No pending videos</div>'}
+    </div>`;
+}
+
+function videoCard(v, kind) {
+  const statusBadge = kind==='pending'
+    ? '<span class="badge" style="background:#FEF3C7;color:#92400E">PENDING</span>'
+    : '<span class="badge" style="background:#D1FAE5;color:#065F46">APPROVED</span>';
+  const btns = kind==='pending' ? `
+    <button data-testid="approve-${v.id}" onclick="approveVideo(${v.id})" class="bg-green-500 text-white px-3 py-2 rounded-xl font-semibold">✅ Approve</button>
+    <button data-testid="reject-${v.id}" onclick="rejectVideo(${v.id})" class="bg-red-500 text-white px-3 py-2 rounded-xl font-semibold">❌ Reject</button>
+    <button data-testid="download-raw-${v.id}" onclick="downloadRaw('${escapeAttr(v.videoUrl)}','${escapeAttr(v.title)}','${escapeAttr(v.teacherName)}')" class="bg-gray-800 text-white px-3 py-2 rounded-xl font-semibold">⬇️ RAW HD</button>
+    <button data-testid="download-merge-${v.id}" onclick="mergeAndDownload('${escapeAttr(v.videoUrl)}','${escapeAttr(v.title)}','${escapeAttr(v.teacherName)}')" style="background:#2196F3" class="text-white px-3 py-2 rounded-xl font-semibold">⬇️ With Intro/Outro</button>
+  ` : `
+    <button onclick="downloadRaw('${escapeAttr(v.videoUrl)}','${escapeAttr(v.title)}','${escapeAttr(v.teacherName)}')" class="bg-gray-800 text-white px-3 py-2 rounded-xl font-semibold">⬇️ RAW HD</button>
+    <button onclick="mergeAndDownload('${escapeAttr(v.videoUrl)}','${escapeAttr(v.title)}','${escapeAttr(v.teacherName)}')" style="background:#2196F3" class="text-white px-3 py-2 rounded-xl font-semibold">⬇️ With Intro/Outro HD</button>
+    <button data-testid="unapprove-${v.id}" onclick="unapproveVideo(${v.id})" class="bg-yellow-500 text-white px-3 py-2 rounded-xl font-semibold">↩️ Unapprove</button>
+  `;
+  return `
+    <div class="card p-4">
+      <video src="${v.videoUrl}" controls class="w-full mb-3" style="max-height:260px"></video>
+      <div class="flex items-center gap-2 mb-1">
+        <h4 class="font-bold text-lg">${escapeHtml(v.title)}</h4>
+        <span class="badge" style="background:#E0E7FF;color:#3730A3">${escapeHtml(v.category)}</span>
+        ${statusBadge}
+      </div>
+      <p class="text-sm text-gray-600">👩‍🏫 By: <b>${escapeHtml(v.teacherName)}</b> (${escapeHtml(v.teacherUsername)})</p>
+      <p class="text-xs text-gray-500 mb-3">${new Date(v.date).toLocaleString()}${v.approvedAt?` • Approved: ${new Date(v.approvedAt).toLocaleDateString()}`:''}</p>
+      <div class="flex flex-wrap gap-2">${btns}</div>
+    </div>`;
+}
+
+function approveVideo(id) {
+  const pending = LS.get('pending_videos', []);
+  const approved = LS.get('approved_videos', []);
+  const idx = pending.findIndex(v => v.id===id); if (idx<0) return;
+  const v = pending[idx]; v.approvedAt = new Date().toISOString(); v.approvedBy = state.session.user.username; v.status = 'APPROVED';
+  approved.push(v); pending.splice(idx,1);
+  LS.set('pending_videos', pending); LS.set('approved_videos', approved);
+  renderTab();
+}
+function rejectVideo(id) {
+  if (!confirm('Reject and delete this video?')) return;
+  LS.set('pending_videos', LS.get('pending_videos', []).filter(v => v.id!==id));
+  renderTab();
+}
+function unapproveVideo(id) {
+  const approved = LS.get('approved_videos', []);
+  const pending = LS.get('pending_videos', []);
+  const idx = approved.findIndex(v => v.id===id); if (idx<0) return;
+  const v = approved[idx]; delete v.approvedAt; delete v.approvedBy; v.status='PENDING';
+  pending.push(v); approved.splice(idx,1);
+  LS.set('pending_videos', pending); LS.set('approved_videos', approved);
+  renderTab();
+}
+
+/* ---------- TAB: Approved Videos ---------- */
+function tabApproved() {
+  const approved = LS.get('approved_videos', []);
+  const teachers = LS.get('teacher_accounts', []);
+  const f = state.approvedFilter;
+  const now = new Date();
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const filtered = approved.filter(v => {
+    if (f.teacher && v.teacherUsername !== f.teacher) return false;
+    if (f.category && v.category !== f.category) return false;
+    if (f.q && !v.title.toLowerCase().includes(f.q.toLowerCase())) return false;
+    if (f.time==='month') { const d=new Date(v.approvedAt||v.date); const vm=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; if (vm!==curMonth) return false; }
+    return true;
+  });
+  return `
+    <div class="card p-5 mb-4">
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <select onchange="state.approvedFilter.teacher=this.value; renderTab();" class="border rounded-xl px-3 py-2">
+          <option value="">All Teachers</option>
+          ${teachers.map(t=>`<option value="${t.username}" ${f.teacher===t.username?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
+        </select>
+        <select onchange="state.approvedFilter.category=this.value; renderTab();" class="border rounded-xl px-3 py-2">
+          <option value="">All Categories</option>
+          ${['Letters','Numbers','Colors','Abakada','General'].map(c=>`<option value="${c}" ${f.category===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+        <div class="flex gap-2">
+          <button onclick="state.approvedFilter.time='all'; renderTab();" class="tab-btn flex-1 ${f.time==='all'?'active':''}">All</button>
+          <button onclick="state.approvedFilter.time='month'; renderTab();" class="tab-btn flex-1 ${f.time==='month'?'active':''}">This Month</button>
+        </div>
+        <input oninput="state.approvedFilter.q=this.value; renderTab();" placeholder="Search title" class="border rounded-xl px-3 py-2" />
+      </div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      ${filtered.length ? filtered.map(v => videoCard(v, 'approved')).join('') : '<div class="text-center text-gray-400 col-span-2 p-10">No approved videos</div>'}
+    </div>`;
+}
+
+/* ---------- DOWNLOAD & MERGE ---------- */
+function downloadRaw(url, title, teacherName) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${title}-${teacherName}-RAW.mp4`;
+  a.target = '_blank';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function mergeAndDownload(teacherVideoUrl, title, teacherName) {
+  const branding = LS.get('branding', {});
+  if (!branding.introUrl && !branding.outroUrl) { alert('Upload intro/outro in Branding tab first'); return; }
+  const modal = document.getElementById('mergeModal');
+  const bar = document.getElementById('mergeProgress');
+  const status = document.getElementById('mergeStatus');
+  modal.classList.remove('hidden');
+  bar.style.width = '5%'; status.textContent = 'Loading FFmpeg…';
+  try {
+    const { FFmpeg } = FFmpegWASM;
+    const { fetchFile } = FFmpegUtil;
+    const ffmpeg = new FFmpeg();
+    ffmpeg.on('progress', ({ progress }) => { const p = 30 + Math.round((progress||0)*60); bar.style.width = p+'%'; });
+    await ffmpeg.load();
+    bar.style.width='15%'; status.textContent = 'Fetching videos…';
+    const listLines = [];
+    if (branding.introUrl) { await ffmpeg.writeFile('intro.mp4', await fetchFile(branding.introUrl)); listLines.push("file 'intro.mp4'"); }
+    await ffmpeg.writeFile('teacher.mp4', await fetchFile(teacherVideoUrl)); listLines.push("file 'teacher.mp4'");
+    if (branding.outroUrl) { await ffmpeg.writeFile('outro.mp4', await fetchFile(branding.outroUrl)); listLines.push("file 'outro.mp4'"); }
+    await ffmpeg.writeFile('list.txt', new TextEncoder().encode(listLines.join('\n')));
+    bar.style.width='30%'; status.textContent = 'Merging in HD…';
+    await ffmpeg.exec(['-f','concat','-safe','0','-i','list.txt','-c','copy','final.mp4']);
+    bar.style.width='95%'; status.textContent = 'Preparing download…';
+    const data = await ffmpeg.readFile('final.mp4');
+    const blob = new Blob([data.buffer], { type:'video/mp4' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=`${title}-${teacherName}-with-branding.mp4`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+    bar.style.width='100%'; status.textContent = '✅ Done!';
+    setTimeout(()=>modal.classList.add('hidden'), 1200);
+  } catch(e) {
+    status.textContent = '❌ Merge failed: ' + e.message + ' (tip: -c copy needs same codec/resolution in intro/teacher/outro)';
+    setTimeout(()=>modal.classList.add('hidden'), 4500);
+  }
+}
+
+/* ================== TEACHER DASHBOARD ================== */
+function renderTeacher() {
+  const t = state.session.user;
+  const pending = LS.get('pending_videos', []);
+  const approved = LS.get('approved_videos', []);
+  const mine = [...pending, ...approved].filter(v => v.teacherUsername === t.username);
+  const now = new Date();
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const monthly = mine.filter(v => { const d=new Date(v.date); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`===curMonth; }).length;
+
+  app.innerHTML = `
+    <div class="max-w-4xl mx-auto p-4 sm:p-6">
+      <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div>
+          <h1 class="text-3xl font-bold">👩‍🏫 Welcome, ${escapeHtml(t.name)}</h1>
+          <p class="text-gray-600">Subject: <b>${escapeHtml(t.subject)}</b></p>
+        </div>
+        <button data-testid="logout-btn" onclick="logout()" class="bg-gray-800 text-white px-4 py-2 rounded-xl">Logout</button>
+      </div>
+      <div class="grid grid-cols-2 gap-4 mb-6">
+        <div class="card p-5"><p class="text-sm text-gray-500">My Total Uploads</p><p class="text-3xl font-bold text-[#2196F3]" data-testid="stat-total">${mine.length}</p></div>
+        <div class="card p-5"><p class="text-sm text-gray-500">My This Month</p><p class="text-3xl font-bold text-[#06D6A0]" data-testid="stat-monthly">${monthly}</p></div>
+      </div>
+      <div class="card p-5 mb-6">
+        <h3 class="font-bold text-lg mb-3">📤 Upload New Video</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <select id="tu-category" class="border rounded-xl px-3 py-2" data-testid="upload-category">
+            <option>Letters</option><option>Numbers</option><option>Colors</option><option>Abakada</option><option>General</option>
+          </select>
+          <input id="tu-title" placeholder="Video title" class="border rounded-xl px-3 py-2" data-testid="upload-title" />
+        </div>
+        <input id="tu-file" type="file" accept="video/*" class="w-full mb-3" data-testid="upload-file" />
+        <button data-testid="upload-btn" onclick="teacherUpload()" style="background:#06D6A0" class="text-white font-bold px-5 py-3 rounded-xl">Upload Video</button>
+        <div id="tu-progress" class="mt-3 hidden">
+          <div class="w-full bg-gray-200 rounded-full h-4"><div id="tu-bar" class="progress-bar bg-[#06D6A0] h-4 rounded-full" style="width:0%"></div></div>
+          <p id="tu-status" class="text-sm mt-2 text-gray-700">Uploading HD — original quality preserved</p>
+        </div>
+      </div>
+      <div class="card p-5">
+        <h3 class="font-bold text-lg mb-3">📋 My Submissions <span class="text-sm text-gray-500 font-normal">(${mine.length})</span></h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="my-subs">
+          ${mine.length ? mine.map(v => `
+            <div class="border rounded-2xl p-3">
+              <video src="${v.videoUrl}" controls class="w-full mb-2" style="max-height:200px"></video>
+              <p class="font-semibold">${escapeHtml(v.title)}</p>
+              <p class="text-xs text-gray-500">${new Date(v.date).toLocaleString()}</p>
+              <div class="mt-2">${v.status==='APPROVED'
+                ? '<span class="badge" style="background:#D1FAE5;color:#065F46">APPROVED</span>'
+                : '<span class="badge" style="background:#FEF3C7;color:#92400E">PENDING</span>'}
+                <span class="badge ml-1" style="background:#E0E7FF;color:#3730A3">${escapeHtml(v.category)}</span>
+              </div>
+            </div>`).join('') : '<p class="text-gray-400 col-span-2 text-center p-6">No submissions yet</p>'}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function teacherUpload() {
+  const cat = document.getElementById('tu-category').value;
+  const title = document.getElementById('tu-title').value.trim();
+  const file = document.getElementById('tu-file').files[0];
+  if (!title || !file) return alert('Enter title & choose a video file');
+  const prog = document.getElementById('tu-progress');
+  const bar = document.getElementById('tu-bar');
+  const status = document.getElementById('tu-status');
+  prog.classList.remove('hidden');
+  try {
+    const res = await goFileUpload(file, (pct) => { bar.style.width = pct+'%'; status.textContent = `Uploading HD — original quality preserved (${pct}%)`; });
+    const pending = LS.get('pending_videos', []);
+    const t = state.session.user;
+    pending.push({ id: Date.now(), teacherName: t.name, teacherUsername: t.username, category: cat, title, videoUrl: res.directLink, date: new Date().toISOString(), status:'PENDING' });
+    LS.set('pending_videos', pending);
+    status.textContent = '✅ Na-submit na! Waiting for admin approval — HD preserved';
+    document.getElementById('tu-title').value=''; document.getElementById('tu-file').value='';
+    setTimeout(()=>renderTeacher(), 900);
+  } catch(e) {
+    status.textContent = '❌ Upload failed: ' + e.message;
+  }
+}
+
+/* ================== UTILITIES ================== */
+function escapeHtml(s='') { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s='') { return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+/* Start */
+render();
+</script>
+</body>
+</html>
