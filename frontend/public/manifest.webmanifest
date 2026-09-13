@@ -1,0 +1,16 @@
+{
+  "name": "Ready PH Portal",
+  "short_name": "Ready PH",
+  "description": "Ready PH — Teacher video approval portal",
+  "start_url": "/portal.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF8E7",
+  "theme_color": "#2196F3",
+  "icons": [
+    { "src": "https://customer-assets-4nw71qhi.emergentagent.net/job_ready-portal-2/artifacts/xcgybwuv_IMG-20260828-WA5524.jpg", "sizes": "192x192", "type": "image/jpeg", "purpose": "any" },
+    { "src": "https://customer-assets-4nw71qhi.emergentagent.net/job_ready-portal-2/artifacts/xcgybwuv_IMG-20260828-WA5524.jpg", "sizes": "512x512", "type": "image/jpeg", "purpose": "any" },
+    { "src": "https://customer-assets-4nw71qhi.emergentagent.net/job_ready-portal-2/artifacts/xcgybwuv_IMG-20260828-WA5524.jpg", "sizes": "512x512", "type": "image/jpeg", "purpose": "maskable" }
+  ]
+}

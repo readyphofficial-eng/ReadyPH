@@ -8,6 +8,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="https://customer-assets-4nw71qhi.emergentagent.net/job_ready-portal-2/artifacts/xcgybwuv_IMG-20260828-WA5524.jpg">
+<meta name="theme-color" content="#2196F3">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ready PH">
+<meta name="mobile-web-app-capable" content="yes">
 <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
 <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 <style>
@@ -26,6 +32,29 @@
 </style>
 </head>
 <body class="min-h-screen">
+
+<!-- Install Gate Overlay -->
+<div id="installGate" class="hidden fixed inset-0 z-[9999] flex items-center justify-center p-4" style="background:rgba(30,41,59,0.92)">
+  <div class="card p-6 w-full max-w-md text-center">
+    <img src="https://customer-assets-4nw71qhi.emergentagent.net/job_ready-portal-2/artifacts/xcgybwuv_IMG-20260828-WA5524.jpg" class="w-24 h-24 rounded-full mx-auto mb-3 object-cover shadow" />
+    <h2 class="text-2xl font-bold mb-1">Install Ready PH</h2>
+    <p class="text-sm text-gray-600 mb-4">Para magamit ang app, i-install muna sa home screen mo.</p>
+    <button id="installBtn" class="hidden bg-[#2196F3] text-white font-bold px-6 py-3 rounded-xl w-full mb-3" data-testid="install-btn">📲 Install App</button>
+    <div id="installHelp" class="text-left text-sm bg-gray-50 rounded-xl p-3 hidden">
+      <p class="font-semibold mb-1">iPhone / iPad (Safari):</p>
+      <ol class="list-decimal pl-5 mb-2 text-gray-700">
+        <li>Tap the <b>Share</b> icon</li>
+        <li>Tap <b>Add to Home Screen</b></li>
+      </ol>
+      <p class="font-semibold mb-1">Android (Chrome):</p>
+      <ol class="list-decimal pl-5 text-gray-700">
+        <li>Tap ⋮ menu</li>
+        <li>Tap <b>Install app</b> / <b>Add to Home screen</b></li>
+      </ol>
+    </div>
+    <button id="installDismiss" class="mt-3 text-xs text-gray-500 underline hidden" data-testid="install-dismiss">Skip for now (desktop only)</button>
+  </div>
+</div>
 
 <div id="app"></div>
 
@@ -48,6 +77,17 @@
 const LOGO_URL = 'https://customer-assets-4nw71qhi.emergentagent.net/job_ready-portal-2/artifacts/xcgybwuv_IMG-20260828-WA5524.jpg';
 const LEVELS = ['Preschool','Elementary','Highschool'];
 const DEFAULT_SUBJECTS = ['Letters','Numbers','Colors','Abakada','General'];
+const UPLOAD_CATEGORIES = ['Letters','Numbers','Colors','Abakada','General','Story Time','Singing','Movement'];
+
+function videoBlock(url) {
+  const safe = String(url||'');
+  return `
+    <video src="${safe}" controls playsinline preload="metadata" crossorigin="anonymous" style="width:100%; max-height:300px; border-radius:12px; background:#000" onerror="this.nextElementSibling.style.display='flex'"></video>
+    <div style="display:none" class="mt-2 gap-2 items-center flex-wrap">
+      <button onclick="window.open('${escapeAttr(safe)}','_blank')" class="bg-blue-500 text-white text-xs px-3 py-1 rounded-lg">▶️ Play in new tab</button>
+      <a href="${safe}" target="_blank" class="text-xs text-blue-500 underline">If not playing, open RAW link</a>
+    </div>`;
+}
 
 /* ================== STORAGE HELPERS ================== */
 const LS = {
@@ -65,6 +105,7 @@ const LS = {
   if (!LS.get('pending_videos', null)) LS.set('pending_videos', []);
   if (!LS.get('approved_videos', null)) LS.set('approved_videos', []);
   if (!LS.get('branding', null)) LS.set('branding', { introUrl:null, introName:null, outroUrl:null, outroName:null });
+  if (!LS.get('messages', null)) LS.set('messages', []);
 })();
 
 /* ================== APP STATE ================== */
@@ -138,7 +179,8 @@ function renderAdminLogin() {
           <input data-testid="admin-password-input" id="a-password" type="password" class="w-full border rounded-xl px-4 py-3 mb-4 mt-1" placeholder="••••••" />
           <div id="a-err" class="text-red-600 text-sm mb-2 hidden"></div>
           <button data-testid="admin-submit-btn" type="submit" style="background:#2196F3" class="w-full text-white font-bold py-3 rounded-xl">Login</button>
-          <button type="button" onclick="goto('selector')" class="w-full mt-3 py-2 text-sm text-gray-600">← Back</button>
+          <button type="button" onclick="forgotAdmin()" class="w-full mt-2 py-1 text-sm text-blue-600 underline" data-testid="forgot-admin">Forgot password?</button>
+          <button type="button" onclick="goto('selector')" class="w-full mt-1 py-2 text-sm text-gray-600">← Back</button>
         </form>
       </div>
     </div>`;
@@ -172,7 +214,8 @@ function renderTeacherLogin() {
           <input data-testid="teacher-password-input" id="t-password" type="password" class="w-full border rounded-xl px-4 py-3 mb-4 mt-1" />
           <div id="t-err" class="text-red-600 text-sm mb-2 hidden"></div>
           <button data-testid="teacher-submit-btn" type="submit" style="background:#06D6A0" class="w-full text-white font-bold py-3 rounded-xl">Login</button>
-          <button type="button" onclick="goto('selector')" class="w-full mt-3 py-2 text-sm text-gray-600">← Back</button>
+          <button type="button" onclick="forgotTeacher()" class="w-full mt-2 py-1 text-sm text-blue-600 underline" data-testid="forgot-teacher">Forgot password?</button>
+          <button type="button" onclick="goto('selector')" class="w-full mt-1 py-2 text-sm text-gray-600">← Back</button>
         </form>
       </div>
     </div>`;
@@ -210,6 +253,9 @@ function renderAdmin() {
         <button data-testid="tab-branding" onclick="setTab('branding')" class="tab-btn ${state.activeTab==='branding'?'active':''}">Branding</button>
         <button data-testid="tab-pending" onclick="setTab('pending')" class="tab-btn ${state.activeTab==='pending'?'active':''}">Pending Videos</button>
         <button data-testid="tab-approved" onclick="setTab('approved')" class="tab-btn ${state.activeTab==='approved'?'active':''}">Approved Videos</button>
+        <button data-testid="tab-messages" onclick="setTab('messages')" class="tab-btn ${state.activeTab==='messages'?'active':''} relative">
+          💬 Messages${adminUnreadTotal()>0?` <span class="ml-1 badge" style="background:#EF4444;color:white">${adminUnreadTotal()}</span>`:''}
+        </button>
       </div>
       <div id="tab-content"></div>
     </div>`;
@@ -225,6 +271,7 @@ function renderTab() {
   if (state.activeTab==='branding') c.innerHTML = tabBranding();
   if (state.activeTab==='pending') c.innerHTML = tabPending();
   if (state.activeTab==='approved') c.innerHTML = tabApproved();
+  if (state.activeTab==='messages') c.innerHTML = tabMessages();
 }
 
 /* ---------- TAB: Manage Teachers ---------- */
@@ -284,8 +331,9 @@ function tabTeachers() {
       <td class="p-3 text-center">${countVideos(t.username)}</td>
       <td class="p-3 text-center">${monthlyCount(t.username)}</td>
       <td class="p-3">
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <button data-testid="edit-teacher-${t.id}" onclick="openEditTeacher(${t.id})" class="text-blue-600 font-semibold">Edit</button>
+          <button data-testid="reset-teacher-${t.id}" onclick="resetTeacherPassword(${t.id})" class="text-amber-600 font-semibold">Reset PW</button>
           <button data-testid="del-teacher-${t.id}" onclick="deleteTeacher(${t.id})" class="text-red-600 font-semibold">Delete</button>
         </div>
       </td>
@@ -477,7 +525,14 @@ function tabAdmins() {
         </div>
       </td>
       <td class="p-3 text-sm text-gray-600">${new Date(a.createdAt).toLocaleDateString()}</td>
-      <td class="p-3">${a.username==='admin' ? '<span class="text-gray-400 text-sm">Protected</span>' : `<button data-testid="del-admin-${a.username}" onclick="deleteAdmin('${a.username}')" class="text-red-600 font-semibold">Delete</button>`}</td>
+      <td class="p-3">
+        ${a.username==='admin' && state.session.user.username!=='admin'
+          ? '<span class="text-gray-400 text-sm">Protected</span>'
+          : `<div class="flex flex-wrap gap-2">
+              <button data-testid="reset-admin-${a.username}" onclick="resetAdminPassword('${a.username}')" class="text-amber-600 font-semibold">Reset PW</button>
+              ${a.username!=='admin' ? `<button data-testid="del-admin-${a.username}" onclick="deleteAdmin('${a.username}')" class="text-red-600 font-semibold">Delete</button>` : '<span class="text-xs text-gray-400 self-center">(default)</span>'}
+            </div>`}
+      </td>
     </tr>`).join('');
   return `
     <div class="card p-5 mb-6">
@@ -515,6 +570,33 @@ function deleteAdmin(u) {
   if (!confirm('Delete this admin?')) return;
   LS.set('admin_accounts', LS.get('admin_accounts', []).filter(a => a.username !== u));
   renderTab();
+}
+
+function resetTeacherPassword(id) {
+  const teachers = LS.get('teacher_accounts', []);
+  const t = teachers.find(x => x.id===id); if (!t) return;
+  const np = prompt(`New password for teacher "${t.name}" (@${t.username}):`);
+  if (!np) return;
+  t.password = np;
+  LS.set('teacher_accounts', teachers);
+  alert('✅ Password reset. Share it with the teacher.');
+  renderTab();
+}
+function resetAdminPassword(username) {
+  const admins = LS.get('admin_accounts', []);
+  const a = admins.find(x => x.username===username); if (!a) return;
+  const np = prompt(`New password for admin "${a.name}" (@${a.username}):`);
+  if (!np) return;
+  a.password = np;
+  LS.set('admin_accounts', admins);
+  alert('✅ Password reset.');
+  renderTab();
+}
+function forgotAdmin() {
+  alert('Forgot admin password?\n\nAsk another admin to reset it in the "Manage Admins" tab.\n\nIf no other admin is available and this is the Main Admin (username: admin), the default password is "readyph2026". To fully reset, clear browser site data.');
+}
+function forgotTeacher() {
+  alert('Forgot your password?\n\nPlease contact your admin. They can reset it for you from the "Manage Teachers" tab.');
 }
 
 /* ---------- TAB: Branding ---------- */
@@ -592,7 +674,11 @@ async function goFileUpload(file, onProgress) {
     xhr.onload = () => {
       try {
         const j = JSON.parse(xhr.responseText);
-        if (j.status==='ok') resolve({ directLink: j.data.downloadPage || j.data.directLink || j.data.link, raw: j });
+        if (j.status==='ok') {
+          let link = j.data.directLink || j.data.downloadPage || j.data.link;
+          if (link && link.startsWith('http:')) link = link.replace('http:','https:');
+          resolve({ directLink: link, raw: j });
+        }
         else reject(new Error(j.status || 'Upload failed'));
       } catch(e){ reject(e); }
     };
@@ -657,12 +743,13 @@ function videoCard(v, kind) {
   `;
   return `
     <div class="card p-4">
-      <video src="${v.videoUrl}" controls class="w-full mb-3" style="max-height:260px"></video>
-      <div class="flex items-center gap-2 mb-1">
+      ${videoBlock(v.videoUrl)}
+      <div class="flex items-center gap-2 mb-1 mt-3 flex-wrap">
         <h4 class="font-bold text-lg">${escapeHtml(v.title)}</h4>
         <span class="badge" style="background:#E0E7FF;color:#3730A3">${escapeHtml(v.category)}</span>
         ${statusBadge}
       </div>
+      ${v.description ? `<p class="text-sm text-gray-700 italic mb-1">📝 ${escapeHtml(v.description)}</p>` : ''}
       <p class="text-sm text-gray-600">👩‍🏫 By: <b>${escapeHtml(v.teacherName)}</b> (${escapeHtml(v.teacherUsername)})</p>
       <p class="text-xs text-gray-500 mb-3">${new Date(v.date).toLocaleString()}${v.approvedAt?` • Approved: ${new Date(v.approvedAt).toLocaleDateString()}`:''}</p>
       <div class="flex flex-wrap gap-2">${btns}</div>
@@ -804,8 +891,12 @@ function renderTeacher() {
             </div>
           </div>
         </div>
-        <button data-testid="logout-btn" onclick="logout()" class="bg-gray-800 text-white px-4 py-2 rounded-xl">Logout</button>
+        <div class="flex gap-2">
+          <button data-testid="open-messages-btn" onclick="toggleTeacherMessages()" class="bg-[#2196F3] text-white px-4 py-2 rounded-xl relative">💬 Message Admin${teacherUnreadCount(teacher.username)>0?` <span class="ml-1 badge" style="background:#EF4444;color:white">${teacherUnreadCount(teacher.username)}</span>`:''}</button>
+          <button data-testid="logout-btn" onclick="logout()" class="bg-gray-800 text-white px-4 py-2 rounded-xl">Logout</button>
+        </div>
       </div>
+      <div id="teacher-msg-panel"></div>
       <div class="grid grid-cols-2 gap-4 mb-6">
         <div class="card p-5"><p class="text-sm text-gray-500">My Total Uploads</p><p class="text-3xl font-bold text-[#2196F3]" data-testid="stat-total">${mine.length}</p></div>
         <div class="card p-5"><p class="text-sm text-gray-500">My This Month</p><p class="text-3xl font-bold text-[#06D6A0]" data-testid="stat-monthly">${monthly}</p></div>
@@ -813,12 +904,17 @@ function renderTeacher() {
       <div class="card p-5 mb-6">
         <h3 class="font-bold text-lg mb-3">📤 Upload New Video</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <input id="tu-title" placeholder="Title *" class="border rounded-xl px-3 py-2" data-testid="upload-title" />
           <select id="tu-category" class="border rounded-xl px-3 py-2" data-testid="upload-category">
-            ${subjects.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}
+            ${UPLOAD_CATEGORIES.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}
           </select>
-          <input id="tu-title" placeholder="Video title" class="border rounded-xl px-3 py-2" data-testid="upload-title" />
         </div>
-        <input id="tu-file" type="file" accept="video/*" class="w-full mb-3" data-testid="upload-file" />
+        <textarea id="tu-description" placeholder="Ano laman ng video na to? (optional)" class="border rounded-xl px-3 py-2 w-full mb-3" rows="2" data-testid="upload-description"></textarea>
+        <input id="tu-file" type="file" accept="video/*" class="w-full mb-3" data-testid="upload-file" onchange="onTeacherFilePick(event)" />
+        <div id="tu-preview" class="mb-3 hidden">
+          <p class="text-xs text-gray-500 mb-1">Preview before upload:</p>
+          <video id="tu-preview-video" controls playsinline style="width:100%; max-height:300px; background:#000; border-radius:12px"></video>
+        </div>
         <button data-testid="upload-btn" onclick="teacherUpload()" style="background:#06D6A0" class="text-white font-bold px-5 py-3 rounded-xl">Upload Video</button>
         <div id="tu-progress" class="mt-3 hidden">
           <div class="w-full bg-gray-200 rounded-full h-4"><div id="tu-bar" class="progress-bar bg-[#06D6A0] h-4 rounded-full" style="width:0%"></div></div>
@@ -830,9 +926,10 @@ function renderTeacher() {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="my-subs">
           ${mine.length ? mine.map(v => `
             <div class="border rounded-2xl p-3">
-              <video src="${v.videoUrl}" controls class="w-full mb-2" style="max-height:200px"></video>
-              <p class="font-semibold">${escapeHtml(v.title)}</p>
-              <p class="text-xs text-gray-500">${new Date(v.date).toLocaleString()}</p>
+              ${videoBlock(v.videoUrl)}
+              <p class="font-semibold mt-2">${escapeHtml(v.title)}</p>
+              ${v.description ? `<p class="text-xs text-gray-700 italic mt-1">📝 ${escapeHtml(v.description)}</p>` : ''}
+              <p class="text-xs text-gray-500 mt-1">${new Date(v.date).toLocaleString()}</p>
               <div class="mt-2">${v.status==='APPROVED'
                 ? '<span class="badge" style="background:#D1FAE5;color:#065F46">APPROVED</span>'
                 : '<span class="badge" style="background:#FEF3C7;color:#92400E">PENDING</span>'}
@@ -844,27 +941,231 @@ function renderTeacher() {
     </div>`;
 }
 
+function onTeacherFilePick(evt) {
+  const f = evt.target.files && evt.target.files[0];
+  const wrap = document.getElementById('tu-preview');
+  const vid = document.getElementById('tu-preview-video');
+  if (!f) { wrap.classList.add('hidden'); vid.src=''; return; }
+  if (vid.src && vid.src.startsWith('blob:')) URL.revokeObjectURL(vid.src);
+  vid.src = URL.createObjectURL(f);
+  wrap.classList.remove('hidden');
+}
+
+function toggleTeacherMessages(forceOpen) {
+  const wrap = document.getElementById('teacher-msg-panel');
+  if (!wrap) return;
+  if (!forceOpen && wrap.innerHTML.trim()) { wrap.innerHTML = ''; }
+  else { renderTeacherMessages(); }
+}
+
 async function teacherUpload() {
-  const cat = document.getElementById('tu-category').value;
   const title = document.getElementById('tu-title').value.trim();
+  const cat = document.getElementById('tu-category').value;
+  const description = document.getElementById('tu-description').value.trim();
   const file = document.getElementById('tu-file').files[0];
-  if (!title || !file) return alert('Enter title & choose a video file');
+  if (!title) return alert('Title is required');
+  if (!file) return alert('Choose a video file');
   const prog = document.getElementById('tu-progress');
   const bar = document.getElementById('tu-bar');
   const status = document.getElementById('tu-status');
   prog.classList.remove('hidden');
   try {
     const res = await goFileUpload(file, (pct) => { bar.style.width = pct+'%'; status.textContent = `Uploading HD — original quality preserved (${pct}%)`; });
+    let url = res.directLink || '';
+    if (url && url.startsWith('http:')) url = url.replace('http:', 'https:');
     const pending = LS.get('pending_videos', []);
     const t = state.session.user;
-    pending.push({ id: Date.now(), teacherName: t.name, teacherUsername: t.username, category: cat, title, videoUrl: res.directLink, date: new Date().toISOString(), status:'PENDING' });
+    pending.push({ id: Date.now(), teacherName: t.name, teacherUsername: t.username, title, category: cat, description, videoUrl: url, date: new Date().toISOString(), status:'PENDING' });
     LS.set('pending_videos', pending);
-    status.textContent = '✅ Na-submit na! Waiting for admin approval — HD preserved';
-    document.getElementById('tu-title').value=''; document.getElementById('tu-file').value='';
+    status.textContent = '✅ Na-submit na! HD preserved';
+    document.getElementById('tu-title').value=''; document.getElementById('tu-description').value=''; document.getElementById('tu-file').value='';
+    const vid = document.getElementById('tu-preview-video'); if (vid.src && vid.src.startsWith('blob:')) URL.revokeObjectURL(vid.src);
+    document.getElementById('tu-preview').classList.add('hidden');
     setTimeout(()=>renderTeacher(), 900);
   } catch(e) {
     status.textContent = '❌ Upload failed: ' + e.message;
   }
+}
+
+/* ================== MESSAGING ================== */
+/* Message shape: {id, fromUsername, fromName, fromType('teacher'|'admin'), toUsername, message, date, read} */
+
+function adminUnreadTotal() {
+  return LS.get('messages', []).filter(m => m.fromType==='teacher' && !m.read).length;
+}
+function teacherUnreadCount(username) {
+  return LS.get('messages', []).filter(m => m.fromType==='admin' && m.toUsername===username && !m.read).length;
+}
+function teacherUnreadFromAdmin(teacherUsername, adminUsername) {
+  return LS.get('messages', []).filter(m => m.fromType==='admin' && m.fromUsername===adminUsername && m.toUsername===teacherUsername && !m.read).length;
+}
+function threadForTeacher(teacherUsername) {
+  return LS.get('messages', [])
+    .filter(m => m.fromUsername===teacherUsername || m.toUsername===teacherUsername)
+    .sort((a,b) => new Date(a.date) - new Date(b.date));
+}
+function threadBetween(teacherUsername, adminUsername) {
+  return LS.get('messages', [])
+    .filter(m =>
+      (m.fromUsername===teacherUsername && m.toUsername===adminUsername) ||
+      (m.fromUsername===adminUsername && m.toUsername===teacherUsername))
+    .sort((a,b) => new Date(a.date) - new Date(b.date));
+}
+function sendMessage({ fromUsername, fromName, fromType, toUsername, message }) {
+  if (!message || !message.trim()) return;
+  const msgs = LS.get('messages', []);
+  msgs.push({ id: Date.now(), fromUsername, fromName, fromType, toUsername, message: message.trim(), date: new Date().toISOString(), read: false });
+  LS.set('messages', msgs);
+}
+function markThreadRead(teacherUsername, viewerType, adminUsername) {
+  const msgs = LS.get('messages', []);
+  let changed = false;
+  msgs.forEach(m => {
+    if (m.read) return;
+    if (viewerType==='admin' && m.fromType==='teacher' && m.fromUsername===teacherUsername) { m.read = true; changed = true; }
+    if (viewerType==='teacher' && m.fromType==='admin' && m.toUsername===teacherUsername && (!adminUsername || m.fromUsername===adminUsername)) { m.read = true; changed = true; }
+  });
+  if (changed) LS.set('messages', msgs);
+}
+
+/* ---------- Admin Messages Tab ---------- */
+function tabMessages() {
+  const teachers = LS.get('teacher_accounts', []);
+  const msgs = LS.get('messages', []);
+  const selected = state.selectedThread;
+  const list = teachers.map(t => {
+    const unread = msgs.filter(m => m.fromType==='teacher' && m.fromUsername===t.username && !m.read).length;
+    const last = [...msgs].reverse().find(m => m.fromUsername===t.username || m.toUsername===t.username);
+    const active = selected===t.username;
+    return `<button onclick="openThread('${escapeAttr(t.username)}')" class="w-full text-left p-3 border-b hover:bg-gray-50 ${active?'bg-blue-50':''}" data-testid="thread-${escapeAttr(t.username)}">
+      <div class="flex justify-between items-center">
+        <b>${escapeHtml(t.name)}</b>
+        ${unread>0?`<span class="badge" style="background:#EF4444;color:white">${unread}</span>`:''}
+      </div>
+      <p class="text-xs text-gray-500 truncate">@${escapeHtml(t.username)}${last?' • '+escapeHtml(last.message.slice(0,40)):''}</p>
+    </button>`;
+  }).join('');
+
+  const thread = selected ? threadForTeacher(selected) : [];
+  const teacher = teachers.find(t => t.username === selected);
+  const bubbles = thread.map(m => {
+    const mine = m.fromType==='admin';
+    const roleColor = mine ? 'text-white/80' : 'text-gray-500';
+    return `<div class="flex ${mine?'justify-end':'justify-start'} mb-2">
+      <div class="max-w-[75%] p-3 rounded-2xl ${mine?'bg-[#2196F3] text-white':'bg-gray-200 text-gray-800'}">
+        <p class="text-[11px] font-semibold ${roleColor} mb-1">${escapeHtml(m.fromName)} <span class="opacity-70">(${m.fromType})</span></p>
+        <p class="text-sm whitespace-pre-wrap">${escapeHtml(m.message)}</p>
+        <p class="text-[10px] opacity-70 mt-1">${new Date(m.date).toLocaleString()}</p>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="card overflow-hidden md:col-span-1">
+        <div class="p-3 border-b bg-gray-50"><b>Teachers</b></div>
+        <div class="max-h-[500px] overflow-auto">${list || '<p class="text-gray-400 p-4 text-center">No teachers</p>'}</div>
+      </div>
+      <div class="card md:col-span-2 p-4 flex flex-col" style="min-height:520px">
+        ${selected && teacher ? `
+          <div class="border-b pb-2 mb-3"><b>${escapeHtml(teacher.name)}</b> <span class="text-sm text-gray-500">@${escapeHtml(teacher.username)}</span></div>
+          <div class="flex-1 overflow-auto mb-3" style="max-height:400px" id="msg-scroll">${bubbles || '<p class="text-gray-400 text-center p-6">No messages yet</p>'}</div>
+          <div class="flex gap-2">
+            <input id="admin-msg-input" placeholder="Type a reply as ${escapeAttr(state.session.user.name)}…" class="border rounded-xl px-3 py-2 flex-1" onkeydown="if(event.key==='Enter'){event.preventDefault(); adminSendMessage();}" data-testid="admin-msg-input" />
+            <button data-testid="admin-msg-send" onclick="adminSendMessage()" style="background:#2196F3" class="text-white font-bold px-5 rounded-xl">Send</button>
+          </div>
+        ` : '<p class="text-gray-400 text-center p-10">Select a teacher on the left to open the chat</p>'}
+      </div>
+    </div>`;
+}
+
+function openThread(username) {
+  state.selectedThread = username;
+  markThreadRead(username, 'admin');
+  renderAdmin();
+}
+function adminSendMessage() {
+  if (!state.selectedThread) return;
+  const input = document.getElementById('admin-msg-input');
+  const teacher = LS.get('teacher_accounts', []).find(t => t.username === state.selectedThread);
+  if (!teacher) return;
+  sendMessage({ fromUsername: state.session.user.username, fromName: state.session.user.name, fromType:'admin', toUsername: teacher.username, message: input.value });
+  input.value = '';
+  renderTab();
+  setTimeout(()=>{ const s=document.getElementById('msg-scroll'); if(s) s.scrollTop = s.scrollHeight; }, 50);
+}
+
+/* ---------- Teacher Messaging (per-admin threads) ---------- */
+function renderTeacherMessages() {
+  const t = state.session.user;
+  const admins = LS.get('admin_accounts', []);
+  const msgs = LS.get('messages', []);
+  // Ensure we have a selected admin (default to first one that messaged, else first admin)
+  if (!state.selectedAdmin) {
+    const firstWithMsg = admins.find(a => msgs.some(m => (m.fromUsername===a.username && m.toUsername===t.username) || (m.fromUsername===t.username && m.toUsername===a.username)));
+    state.selectedAdmin = (firstWithMsg||admins[0]||{}).username;
+  }
+  markThreadRead(t.username, 'teacher', state.selectedAdmin);
+
+  const list = admins.map(a => {
+    const unread = teacherUnreadFromAdmin(t.username, a.username);
+    const last = [...msgs].reverse().find(m => (m.fromUsername===a.username && m.toUsername===t.username) || (m.fromUsername===t.username && m.toUsername===a.username));
+    const active = state.selectedAdmin===a.username;
+    return `<button onclick="teacherSelectAdmin('${escapeAttr(a.username)}')" class="w-full text-left p-3 border-b hover:bg-gray-50 ${active?'bg-green-50':''}" data-testid="admin-thread-${escapeAttr(a.username)}">
+      <div class="flex justify-between items-center">
+        <b>${escapeHtml(a.name)}</b>
+        ${unread>0?`<span class="badge" style="background:#EF4444;color:white">${unread}</span>`:''}
+      </div>
+      <p class="text-xs text-gray-500 truncate">@${escapeHtml(a.username)}${last?' • '+escapeHtml(last.message.slice(0,40)):''}</p>
+    </button>`;
+  }).join('');
+
+  const thread = state.selectedAdmin ? threadBetween(t.username, state.selectedAdmin) : [];
+  const admin = admins.find(a => a.username === state.selectedAdmin);
+  const bubbles = thread.map(m => {
+    const mine = m.fromType==='teacher';
+    const roleColor = mine ? 'text-white/80' : 'text-gray-600';
+    return `<div class="flex ${mine?'justify-end':'justify-start'} mb-2">
+      <div class="max-w-[75%] p-3 rounded-2xl ${mine?'bg-[#06D6A0] text-white':'bg-gray-200 text-gray-800'}">
+        <p class="text-[11px] font-semibold ${roleColor} mb-1">${escapeHtml(m.fromName)} <span class="opacity-70">(${m.fromType})</span></p>
+        <p class="text-sm whitespace-pre-wrap">${escapeHtml(m.message)}</p>
+        <p class="text-[10px] opacity-70 mt-1">${new Date(m.date).toLocaleString()}</p>
+      </div>
+    </div>`;
+  }).join('');
+
+  const wrap = document.getElementById('teacher-msg-panel');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="card p-4 mb-6">
+      <h3 class="font-bold text-lg mb-3">💬 Messages</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="border rounded-xl overflow-hidden md:col-span-1">
+          <div class="p-2 bg-gray-50 border-b text-sm font-semibold">Admins</div>
+          <div style="max-height:340px; overflow:auto">${list || '<p class="text-gray-400 text-center p-3 text-sm">No admins</p>'}</div>
+        </div>
+        <div class="md:col-span-2 flex flex-col" style="min-height:340px">
+          ${admin ? `
+            <div class="border-b pb-1 mb-2 text-sm"><b>${escapeHtml(admin.name)}</b> <span class="text-gray-500">@${escapeHtml(admin.username)}</span></div>
+            <div class="flex-1 overflow-auto border rounded-xl p-3 mb-2" style="max-height:280px" id="tmsg-scroll">${bubbles || '<p class="text-gray-400 text-center p-6">Say hi 👋</p>'}</div>
+            <div class="flex gap-2">
+              <input id="teacher-msg-input" placeholder="Message ${escapeAttr(admin.name)}…" class="border rounded-xl px-3 py-2 flex-1" onkeydown="if(event.key==='Enter'){event.preventDefault(); teacherSendMessage();}" data-testid="teacher-msg-input" />
+              <button data-testid="teacher-msg-send" onclick="teacherSendMessage()" style="background:#06D6A0" class="text-white font-bold px-5 rounded-xl">Send</button>
+            </div>
+          ` : '<p class="text-gray-400 text-center p-6">Pick an admin</p>'}
+        </div>
+      </div>
+    </div>`;
+  setTimeout(()=>{ const s=document.getElementById('tmsg-scroll'); if(s) s.scrollTop = s.scrollHeight; }, 50);
+}
+function teacherSelectAdmin(username) { state.selectedAdmin = username; renderTeacher(); toggleTeacherMessages(true); }
+function teacherSendMessage() {
+  const t = state.session.user;
+  if (!state.selectedAdmin) return alert('Pick an admin first');
+  const input = document.getElementById('teacher-msg-input');
+  sendMessage({ fromUsername: t.username, fromName: t.name, fromType:'teacher', toUsername: state.selectedAdmin, message: input.value });
+  input.value = '';
+  renderTeacherMessages();
 }
 
 /* ================== UTILITIES ================== */
@@ -876,6 +1177,49 @@ function allCategories() {
 }
 function escapeHtml(s='') { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s='') { return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+/* ================== PWA INSTALL GATE ================== */
+(function installGate() {
+  // Register SW
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+  }
+  const gate = document.getElementById('installGate');
+  const btn = document.getElementById('installBtn');
+  const help = document.getElementById('installHelp');
+  const dismiss = document.getElementById('installDismiss');
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+  if (isStandalone) return; // already installed → no gate
+
+  let deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    btn.classList.remove('hidden');
+  });
+
+  btn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') { gate.classList.add('hidden'); }
+    deferredPrompt = null;
+  });
+
+  window.addEventListener('appinstalled', () => { gate.classList.add('hidden'); });
+
+  // If no beforeinstallprompt (iOS / desktop / etc) show manual instructions
+  setTimeout(() => {
+    if (!deferredPrompt) help.classList.remove('hidden');
+    if (!isMobile) dismiss.classList.remove('hidden');
+  }, 800);
+
+  dismiss.addEventListener('click', () => { gate.classList.add('hidden'); });
+
+  gate.classList.remove('hidden');
+})();
 
 /* Start */
 render();
