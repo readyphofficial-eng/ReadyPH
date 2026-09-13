@@ -195,6 +195,7 @@ function adminLogin() {
   if (!found) { err.textContent='Invalid username or password'; err.classList.remove('hidden'); return; }
   setSession({ type:'admin', user: found });
   state.route = 'admin';
+  requestNotifyPermission();
   render();
 }
 
@@ -230,6 +231,7 @@ function teacherLogin() {
   if (!found) { err.textContent='Account not found — contact admin'; err.classList.remove('hidden'); return; }
   setSession({ type:'teacher', user: found });
   state.route = 'teacher';
+  requestNotifyPermission();
   render();
 }
 
@@ -1014,8 +1016,10 @@ function threadBetween(teacherUsername, adminUsername) {
 function sendMessage({ fromUsername, fromName, fromType, toUsername, message }) {
   if (!message || !message.trim()) return;
   const msgs = LS.get('messages', []);
-  msgs.push({ id: Date.now(), fromUsername, fromName, fromType, toUsername, message: message.trim(), date: new Date().toISOString(), read: false });
+  const m = { id: Date.now(), fromUsername, fromName, fromType, toUsername, message: message.trim(), date: new Date().toISOString(), read: false };
+  msgs.push(m);
   LS.set('messages', msgs);
+  lastMsgId = Math.max(lastMsgId, m.id); // don't self-notify
 }
 function markThreadRead(teacherUsername, viewerType, adminUsername) {
   const msgs = LS.get('messages', []);
@@ -1177,6 +1181,70 @@ function allCategories() {
 }
 function escapeHtml(s='') { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s='') { return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+/* ================== PUSH NOTIFY (chime + browser notifications) ================== */
+let lastMsgId = (LS.get('messages', []) || []).reduce((mx,x)=>Math.max(mx,x.id||0), 0);
+
+function requestNotifyPermission() {
+  try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(()=>{}); } catch {}
+}
+
+function playChime() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    const ctx = new AC();
+    const beep = (freq, startOffset, dur=0.35) => {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine'; o.frequency.value = freq;
+      const t = ctx.currentTime + startOffset;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.28, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.start(t); o.stop(t + dur + 0.02);
+    };
+    beep(880, 0);       // A5
+    beep(1174, 0.14);   // D6
+    setTimeout(()=>{ try { ctx.close(); } catch {} }, 700);
+  } catch {}
+}
+
+function pushNotifyForMessage(m) {
+  playChime();
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const n = new Notification(`💬 ${m.fromName}`, {
+        body: m.message.length > 120 ? m.message.slice(0,117)+'…' : m.message,
+        icon: LOGO_URL, tag: 'rph-msg-' + m.fromUsername, renotify: true, silent: false
+      });
+      n.onclick = () => { window.focus(); try { n.close(); } catch {} };
+    }
+  } catch {}
+}
+
+function checkNewMessages() {
+  const s = state.session; if (!s) return;
+  const msgs = LS.get('messages', []);
+  const incoming = msgs.filter(m => {
+    if ((m.id||0) <= lastMsgId) return false;
+    if (s.type === 'teacher') return m.fromType === 'admin' && m.toUsername === s.user.username;
+    if (s.type === 'admin') return m.fromType === 'teacher';
+    return false;
+  });
+  if (!incoming.length) {
+    // still bump lastMsgId even for messages we sent so we ignore them later
+    lastMsgId = Math.max(lastMsgId, ...msgs.map(x => x.id || 0), 0);
+    return;
+  }
+  incoming.forEach(pushNotifyForMessage);
+  lastMsgId = Math.max(lastMsgId, ...msgs.map(x => x.id || 0));
+  // Refresh visible UI (badge counts, threads)
+  if (state.route === 'admin') { renderAdmin(); }
+  else if (state.route === 'teacher') { renderTeacher(); if (document.getElementById('teacher-msg-panel')?.innerHTML.trim()) renderTeacherMessages(); }
+}
+
+setInterval(checkNewMessages, 2000);
+window.addEventListener('storage', (e) => { if (e.key === 'messages') checkNewMessages(); });
 
 /* ================== PWA INSTALL GATE ================== */
 (function installGate() {
